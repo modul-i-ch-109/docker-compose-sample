@@ -1,134 +1,210 @@
-## Compose sample application
-### React application with a NodeJS backend and a MongoDB database
+# Docker Compose Lernbeispiel
 
-Project structure:
-```
-.
-├── backend
-│   ├── Dockerfile
-│   ...
-├── compose.yaml
-├── frontend
-│   ├── ...
-│   └── Dockerfile
-└── README.md
-```
+### React-Frontend + Node.js/Express-Backend + MongoDB
 
-[_compose.yaml_](compose.yaml)
-```
-services:
-  frontend:
-    build:
-      context: frontend
-    ...
-    ports:
-      - 3000:3000
-    ...
-  server:
-    container_name: server
-    restart: always
-    build:
-      context: server
-      args:
-        NODE_PORT: 3000
-    ports:
-      - 3000:3000
-    ...
-    depends_on:
-      - mongo
-  mongo:
-    container_name: mongo
-    restart: always
-    ...
-```
-The compose file defines an application with three services `frontend`, `backend` and `db`.
-When deploying the application, docker compose maps port 3000 of the frontend service container to port 3000 of the host as specified in the file.
-Make sure port 3000 on the host is not already being in use.
-
-## Deploy with docker compose
-
-```
-$ docker compose up -d
-Creating network "react-express-mongodb_default" with the default driver
-Building frontend
-Step 1/9 : FROM node:13.13.0-stretch-slim
- ---> aa6432763c11
-...
-Successfully tagged react-express-mongodb_app:latest
-WARNING: Image for service app was built because it did not already exist. To rebuild this image you must use `docker-compose build` or `docker-compose up --build`.
-Creating frontend        ... done
-Creating mongo           ... done
-Creating app             ... done
-```
-
-## Expected result
-
-Listing containers must show containers running and the port mapping as below:
-```
-$ docker ps
-CONTAINER ID        IMAGE                               COMMAND                  CREATED             STATUS                  PORTS                      NAMES
-06e606d69a0e        react-express-mongodb_server        "docker-entrypoint.s…"   23 minutes ago      Up 23 minutes           0.0.0.0:3000->3000/tcp     server
-ff56585e1db4        react-express-mongodb_frontend      "docker-entrypoint.s…"   23 minutes ago      Up 23 minutes           0.0.0.0:3000->3000/tcp     frontend
-a1f321f06490        mongo:4.2.0                         "docker-entrypoint.s…"   23 minutes ago      Up 23 minutes           0.0.0.0:27017->27017/tcp   mongo
-```
-
-After the application starts, navigate to `http://localhost:3000` in your web browser.
+Eine kleine Todo-App aus drei Containern. Sie zeigt die wichtigsten Docker-Compose-Konzepte:
+**Images bauen**, **Ports exponieren**, **dedizierte Netzwerke** und **Volumes für persistente Daten**.
 
 ![page](./output.png)
 
-Stop and remove the containers
+---
+
+## Architektur
+
 ```
-$ docker compose down
-Stopping server   ... done
-Stopping frontend ... done
-Stopping mongo    ... done
-Removing server   ... done
-Removing frontend ... done
-Removing mongo    ... done
+  Browser
+     │  http://localhost:3000   (einziger Port nach aussen)
+     ▼
+┌────────────┐   frontend-net   ┌────────────┐   backend-net   ┌────────────┐
+│  frontend  │ ───── /api ────▶ │  backend   │ ──────────────▶ │   mongo    │
+│  (React)   │                  │ (Express)  │                 │ (MongoDB)  │
+└────────────┘                  └────────────┘                 └─────┬──────┘
+                                                                     │ /data/db
+                                                                     ▼
+                                                              Volume mongo-data
 ```
 
-##### Explanation of `docker-compose`
+| Service    | Image                         | Netzwerke                     | Port nach aussen | Persistenz                  |
+| ---------- | ----------------------------- | ----------------------------- | ---------------- | --------------------------- |
+| `mongo`    | `mongo:8` (Docker Hub)        | `backend-net`                 | –                | Volume `mongo-data:/data/db` |
+| `backend`  | gebaut aus `backend/Dockerfile`  | `backend-net`, `frontend-net` | –                | –                           |
+| `frontend` | gebaut aus `frontend/Dockerfile` | `frontend-net`                | **3000**         | –                           |
 
-__Version__
+---
 
-The first line defines the version of a file. It sounds confusing :confused:. What is meant by version of file ?? 
+## Projektstruktur
 
-:pill: The Compose file is a YAML file defining services, networks, and volumes for a Docker application. So it is only a version of describing compose.yaml file. There are several versions of the Compose file format – 1, 2, 2.x, and 3.x.
+```
+.
+├── compose.yaml          ← beschreibt alle drei Services (gut kommentiert, zuerst lesen!)
+├── backend/
+│   ├── Dockerfile        ← Bauanleitung für das Backend-Image
+│   ├── server.js         ← Express-Server auf Port 3000
+│   └── config/config.json← enthält die DB-Adresse mongodb://mongo:27017/TodoApp
+└── frontend/
+    ├── Dockerfile        ← Bauanleitung für das Frontend-Image
+    ├── vite.config.js    ← proxy: /api → http://backend:3000
+    └── src/              ← React-App
+```
 
-__Services__
+---
 
-Our main goal to create a containers, it starts from here. As you can see there are three services(Docker images): 
-- First is __frontend__ 
-- Second is __server__ which is __backend - Express(NodeJS)__. I used a name server here, it's totally on you to name it __backend__.
-- Third is __mongo__ which is db __MongoDB__.
+## Starten und Stoppen
 
-##### Service app (backend - NodeJS)
+Voraussetzung: Docker Desktop (oder Docker Engine mit Compose-Plugin). Port 3000 muss frei sein.
 
-We make image of app from our `Dockerfile`, explanation below.
+```powershell
+docker compose up -d --build
+```
 
-__Explanation of service server__
+Danach im Browser öffnen: <http://localhost:3000>
 
-- Defining a **nodejs** service as __server__.
-- We named our **node server** container service as **server**. Assigning a name to the containers makes it easier to read when there are lot of containers on a machine, it can also avoid randomly generated container names. (Although in this case, __container_name__ is also __server__, this is merely personal preference, the name of the service and container do not have to be the same.) 
-- Docker container starts automatically if its fails.
-- Building the __server__ image using the Dockerfile from the current directory and passing an argument to the
-backend(server) `DockerFile`.
-- Mapping the host port to the container port.
+```powershell
+docker compose ps
+```
 
-##### Service mongo
+```powershell
+docker compose logs -f backend
+```
 
-We add another service called **mongo** but this time instead of building it from `DockerFile` we write all the instruction here directly. We simply pull down the standard __mongo image__ from the [DockerHub](https://hub.docker.com/) registry as we have done it for Node image.
+Stoppen (Container und Netzwerke werden entfernt, **das Volume bleibt**):
 
-__Explanation of service mongo__
+```powershell
+docker compose down
+```
 
-- Defining a **mongodb** service as __mongo__.
-- Pulling the mongo 4.2.0 image image again from [DockerHub](https://hub.docker.com/).
-- Mount our current db directory to container. 
-- For persistent storage, we mount the host directory ( just like I did it in **Node** image inside `DockerFile` to reflect the changes) `/data` ( you need to create a directory in root of your project in order to save changes to locally as well) to the container directory `/data/db`, which was identified as a potential mount point in the `mongo Dockerfile` we saw earlier.
-- Mounting volumes gives us persistent storage so when starting a new container, Docker Compose will use the volume of any previous containers and copy it to the new container, ensuring that no data is lost.
-- Finally, we link/depends_on the app container to the mongo container so that the mongo service is reachable from the app service.
-- In last mapping the host port to the container port.
+Alles inklusive Datenbank-Daten löschen:
 
-:key: `If you wish to check your DB changes on your local machine as well. You should have installed MongoDB locally, otherwise you can't access your mongodb service of container from host machine.` 
+```powershell
+docker compose down -v
+```
 
-:white_check_mark: You should check your __mongo__ version is same as used in image. You can see the version of __mongo__ image in `docker-compose `file, I used __image: mongo:4.2.0__. If your mongo db version on your machine is not same then furst you have to updated your  local __mongo__ version in order to works correctly.
+---
+
+## Die Konzepte im Detail
+
+### 1. Image verwenden vs. Image bauen
+
+- **`mongo`** nutzt ein fertiges Image von Docker Hub: `image: mongo:8`.
+  Die Version ist fixiert, damit alle dieselbe Umgebung haben – `mongo:latest` könnte sich jederzeit ändern.
+- **`backend`** und **`frontend`** werden aus ihrem eigenen `Dockerfile` gebaut:
+
+  ```yaml
+  build:
+    context: ./backend      # Ordner mit dem Dockerfile
+    target: development     # welche Stage des Multi-Stage-Dockerfiles gebaut wird
+  ```
+
+  Ein `Dockerfile` ist die Bauanleitung: Basis-Image (`FROM node:...`), Abhängigkeiten installieren
+  (`RUN npm ci`), Code kopieren (`COPY`), Startbefehl (`CMD`).
+
+### 2. Ports exponieren
+
+```yaml
+frontend:
+  ports:
+    - "3000:3000"     # <host-port>:<container-port>
+```
+
+Nur das Frontend hat einen `ports:`-Eintrag. Backend und Datenbank sind **von aussen nicht erreichbar** –
+das ist gewollt: Weniger offene Ports bedeuten weniger Angriffsfläche.
+
+> Wie kommt der Browser dann an die API? Der Vite-Dev-Server im Frontend-Container leitet alle
+> Aufrufe auf `/api` an `http://backend:3000` weiter (`proxy` in `frontend/vite.config.js`).
+> Der Browser spricht also nur mit Port 3000.
+
+### 3. Dedizierte Netzwerke
+
+```yaml
+networks:
+  frontend-net:
+  backend-net:
+```
+
+Ohne eigene Netzwerke landen alle Services im selben `default`-Netz und können sich gegenseitig erreichen.
+Mit zwei Netzwerken trennen wir die Schichten:
+
+- `frontend` ist nur in `frontend-net` → sieht das Backend, **nicht** die Datenbank.
+- `mongo` ist nur in `backend-net` → sieht das Backend, **nicht** das Frontend.
+- `backend` ist in beiden → die einzige Brücke zwischen den Schichten.
+
+**Service-Namen sind Hostnamen.** In jedem benutzerdefinierten Netzwerk betreibt Docker einen eingebauten DNS.
+Deshalb funktioniert `mongodb://mongo:27017` im Backend und `http://backend:3000` im Frontend – ganz ohne IP-Adressen.
+
+### 4. Volumes für persistente Daten
+
+```yaml
+mongo:
+  volumes:
+    - mongo-data:/data/db    # <volume-name>:<pfad-im-container>
+
+volumes:
+  mongo-data:
+```
+
+Ein Container ist kurzlebig: Wird er gelöscht, ist alles weg, was in ihm gespeichert war.
+MongoDB schreibt seine Daten nach `/data/db`. Dort hängen wir ein **benanntes Volume** ein, das Docker
+ausserhalb des Containers verwaltet. Es überlebt `docker compose down` und wird beim nächsten `up` wieder eingehängt.
+
+### 5. Startreihenfolge mit `depends_on`
+
+```yaml
+backend:
+  depends_on:
+    - mongo
+```
+
+Compose startet zuerst `mongo`, dann `backend`, dann `frontend`. Achtung: `depends_on` wartet nur, bis der
+Container **gestartet** ist, nicht bis die Datenbank **bereit** ist. Darum versucht das Backend die Verbindung
+selbst alle 2 Sekunden erneut (`backend/db/index.js`).
+
+---
+
+## Übungen: selbst nachprüfen
+
+**a) Volume: Überleben die Daten einen Neustart?**
+
+1. Im Browser ein paar Todos anlegen.
+2. `docker compose down` ausführen, dann `docker compose up -d`.
+3. Seite neu laden → die Todos sind noch da.
+4. Jetzt `docker compose down -v` und wieder `up -d` → die Liste ist leer. Warum?
+
+```powershell
+docker volume ls
+```
+
+```powershell
+docker volume inspect docker-compose-sample_mongo-data
+```
+
+**b) Netzwerke: Wer sieht wen?**
+
+Das Frontend erreicht das Backend:
+
+```powershell
+docker compose exec frontend node -e "require('http').get('http://backend:3000/api', r => console.log('OK', r.statusCode)).on('error', e => console.log('FEHLER', e.code))"
+```
+
+Das Frontend kennt die Datenbank nicht einmal (`ENOTFOUND`):
+
+```powershell
+docker compose exec frontend node -e "require('dns').lookup('mongo', (e, a) => console.log(e ? 'FEHLER ' + e.code : 'gefunden ' + a))"
+```
+
+Welche Container hängen in welchem Netz?
+
+```powershell
+docker network inspect docker-compose-sample_backend-net --format "{{range .Containers}}{{.Name}} {{end}}"
+```
+
+**c) Ports: Was ist von aussen erreichbar?**
+
+`docker compose ps` zeigt nur beim Frontend `0.0.0.0:3000->3000/tcp`. Bei Backend und Mongo steht nur
+`3000/tcp` bzw. `27017/tcp` – der Port existiert im Container, ist aber nicht auf den Host veröffentlicht.
+
+**d) Zum Weiterdenken**
+
+- Was passiert, wenn du beim Frontend zusätzlich `backend-net` einträgst?
+- Wie müsste `compose.yaml` aussehen, damit du mit MongoDB Compass von deinem Rechner aus auf die DB kommst?
+  Warum ist das in Produktion keine gute Idee?
+- Was bewirkt `internal: true` beim `backend-net` (in `compose.yaml` auskommentiert)?

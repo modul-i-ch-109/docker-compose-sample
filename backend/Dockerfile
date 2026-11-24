@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.4
 
-FROM node:lts-buster-slim AS development
+FROM node:26-slim AS development
 
 # Create app directory
 WORKDIR /usr/src/app
@@ -15,7 +15,7 @@ EXPOSE 3000
 
 CMD [ "npm", "run", "dev" ]
 
-FROM development as dev-envs
+FROM development AS dev-envs
 RUN <<EOF
 apt-get update
 apt-get install -y --no-install-recommends git

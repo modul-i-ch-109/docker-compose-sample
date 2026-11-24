@@ -1,0 +1,102 @@
+# =============================================================================
+#  Docker Compose Lernbeispiel: React (Frontend) + Express (Backend) + MongoDB
+# =============================================================================
+#
+#   Browser ──:3000──▶ [ frontend ] ──frontend-net──▶ [ backend ] ──backend-net──▶ [ mongo ]
+#                                                                                    │
+#                                                                          Volume mongo-data
+#
+#  - Nur das Frontend ist von aussen erreichbar (Port 3000).
+#  - Frontend und Datenbank teilen KEIN Netzwerk: das Frontend kann die DB nicht sehen.
+#  - Die Daten der DB liegen in einem Docker Volume und ueberleben "docker compose down".
+#
+#  Starten:   docker compose up -d --build
+#  Stoppen:   docker compose down          (Daten bleiben erhalten)
+#  Alles weg: docker compose down -v       (loescht auch das Volume!)
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Datenbank
+  # ---------------------------------------------------------------------------
+  mongo:
+    # Offizielles Image von Docker Hub. Die Version ist fixiert, damit jeder
+    # Teilnehmer dieselbe Umgebung bekommt (":latest" kann sich jederzeit aendern).
+    image: mongo:8
+    restart: unless-stopped
+    volumes:
+      # <volume-name>:<pfad-im-container>
+      # MongoDB speichert alles unter /data/db. Wir haengen dort ein
+      # benanntes Docker Volume ein -> Daten bleiben bei Neustarts erhalten.
+      - mongo-data:/data/db
+    networks:
+      # Nur im Backend-Netz. Kein "ports:" -> von aussen nicht erreichbar.
+      - backend-net
+
+  # ---------------------------------------------------------------------------
+  # Backend (Node.js / Express API)
+  # ---------------------------------------------------------------------------
+  backend:
+    # Das Image wird aus ./backend/Dockerfile gebaut.
+    build:
+      context: ./backend
+      # Das Dockerfile hat mehrere Stages; wir wollen nur "development".
+      target: development
+    restart: unless-stopped
+    # Das Backend verbindet sich mit mongodb://mongo:27017/TodoApp
+    # (siehe backend/config/config.json). Der Hostname "mongo" ist der
+    # Service-Name oben: Docker stellt in jedem benutzerdefinierten Netzwerk
+    # einen DNS bereit, der Service-Namen in Container-IPs aufloest.
+    depends_on:
+      # Startreihenfolge: zuerst mongo, dann backend.
+      # (Das Backend wartet zusaetzlich selbst mit Retry, bis die DB bereit ist.)
+      - mongo
+    networks:
+      - backend-net   # spricht mit der Datenbank
+      - frontend-net  # wird vom Frontend angesprochen
+    # Kein "ports:" -> die API ist nur intern ueber die Netzwerke erreichbar.
+
+  # ---------------------------------------------------------------------------
+  # Frontend (React mit Vite Dev-Server)
+  # ---------------------------------------------------------------------------
+  frontend:
+    # Das Image wird aus ./frontend/Dockerfile gebaut.
+    build:
+      context: ./frontend
+      target: development
+    restart: unless-stopped
+    # Der Vite Dev-Server leitet /api-Aufrufe an http://backend:3000 weiter
+    # (siehe "proxy" in frontend/vite.config.js).
+    ports:
+      # <host-port>:<container-port>
+      # Einziger Port, der nach aussen exponiert wird.
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      # Nur im Frontend-Netz -> sieht das Backend, aber NICHT die Datenbank.
+      - frontend-net
+
+# -----------------------------------------------------------------------------
+# Dedizierte Netzwerke
+# -----------------------------------------------------------------------------
+# Ohne diesen Block wuerden alle Services im selben "default"-Netz landen und
+# koennten sich gegenseitig erreichen. Mit zwei Netzwerken trennen wir die
+# Schichten: frontend <-> backend <-> mongo.
+networks:
+  frontend-net:
+    driver: bridge
+  backend-net:
+    driver: bridge
+    # Optional: "internal: true" sperrt zusaetzlich jeden Internetzugang aus
+    # diesem Netz heraus. Die Datenbank braucht keinen.
+    # internal: true
+
+# -----------------------------------------------------------------------------
+# Benannte Volumes
+# -----------------------------------------------------------------------------
+# Docker verwaltet den Speicherort selbst (docker volume inspect <name>).
+# Das Volume lebt unabhaengig von den Containern weiter.
+volumes:
+  mongo-data:
